@@ -1,8 +1,8 @@
 version: 1.0.0
 files:
   - url: SSH-Manager-Setup-1.0.0.exe
-    sha512: QnuungXdrzypxrnXofJMbOu1W768mmT2RXstiKiU4P2pQIt8MHl+uAgI/BUukO1HKkAijA5Qxx2ptl8xadkp3w==
-    size: 76251444
+    sha512: 3oc0Y7ebG19Lsps4MVe+TdhUNBNv34DyvduOkdGFKhgI8EegKdai0vbbfOsjhm46xc4Jum/jLMOIPfjnjPzh1w==
+    size: 76250109
 path: SSH-Manager-Setup-1.0.0.exe
-sha512: QnuungXdrzypxrnXofJMbOu1W768mmT2RXstiKiU4P2pQIt8MHl+uAgI/BUukO1HKkAijA5Qxx2ptl8xadkp3w==
-releaseDate: '2026-06-11T23:08:25.966Z'
+sha512: 3oc0Y7ebG19Lsps4MVe+TdhUNBNv34DyvduOkdGFKhgI8EegKdai0vbbfOsjhm46xc4Jum/jLMOIPfjnjPzh1w==
+releaseDate: '2026-06-11T23:14:57.711Z'

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { WebLinksAddon } from 'xterm-addon-web-links'
@@ -38,7 +38,9 @@ const TerminalSessions: React.FC = () => {
   const [editName, setEditName] = useState('')
   const [splitPanes, setSplitPanes] = useState<SplitPane[]>([])
   const [activePaneId, setActivePaneId] = useState<string | null>(null)
+  const [connectionError, setConnectionError] = useState<string | null>(null)
   const terminalRefs = useRef<{ [key: string]: HTMLDivElement }>({})
+  const instancesRef = useRef<TerminalInstance[]>([])
 
   const quickCommands = [
     { name: '查看系统信息', command: 'uname -a && cat /etc/os-release' },
@@ -50,9 +52,29 @@ const TerminalSessions: React.FC = () => {
   ]
 
   useEffect(() => {
+    instancesRef.current = terminalInstances
+  }, [terminalInstances])
+
+  useEffect(() => {
     loadConnections()
     loadSettings()
-    setupShellListeners()
+    
+    const handleShellData = ({ id, data }: { id: string; data: string }) => {
+      const instance = instancesRef.current.find(inst => inst.connectionId === id)
+      if (instance?.terminal) {
+        instance.terminal.write(data)
+      }
+    }
+
+    const handleShellClose = ({ id }: { id: string }) => {
+      const instance = instancesRef.current.find(inst => inst.connectionId === id)
+      if (instance?.terminal) {
+        instance.terminal.write('\r\n\x1b[33m[Connection closed]\x1b[0m\r\n')
+      }
+    }
+
+    window.electronAPI.onShellData(handleShellData)
+    window.electronAPI.onShellClose(handleShellClose)
 
     return () => {
       terminalInstances.forEach(instance => {
@@ -65,37 +87,25 @@ const TerminalSessions: React.FC = () => {
 
   useEffect(() => {
     const handleResize = () => {
-      terminalInstances.forEach(instance => {
+      instancesRef.current.forEach(instance => {
         if (instance.terminal && instance.fitAddon) {
-          instance.fitAddon.fit()
-          window.electronAPI.sshResize(
-            instance.connectionId,
-            instance.terminal.cols,
-            instance.terminal.rows
-          )
+          try {
+            instance.fitAddon.fit()
+            window.electronAPI.sshResize(
+              instance.connectionId,
+              instance.terminal.cols,
+              instance.terminal.rows
+            )
+          } catch (error) {
+            console.error('Resize error:', error)
+          }
         }
       })
     }
 
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
-  }, [terminalInstances])
-
-  const setupShellListeners = () => {
-    window.electronAPI.onShellData(({ id, data }) => {
-      const instance = terminalInstances.find(inst => inst.connectionId === id)
-      if (instance?.terminal) {
-        instance.terminal.write(data)
-      }
-    })
-
-    window.electronAPI.onShellClose(({ id }) => {
-      const instance = terminalInstances.find(inst => inst.connectionId === id)
-      if (instance?.terminal) {
-        instance.terminal.write('\r\n\x1b[33m[Connection closed]\x1b[0m\r\n')
-      }
-    })
-  }
+  }, [])
 
   const loadConnections = async () => {
     try {
@@ -119,6 +129,8 @@ const TerminalSessions: React.FC = () => {
     const instanceId = `terminal-${Date.now()}`
     
     try {
+      setConnectionError(null)
+      
       const result = await window.electronAPI.sshConnect({
         id: connection.id,
         host: connection.host,
@@ -145,102 +157,133 @@ const TerminalSessions: React.FC = () => {
       }
 
       setTerminalInstances(prev => [...prev, newInstance])
+      instancesRef.current = [...instancesRef.current, newInstance]
       setActiveSessionId(instanceId)
 
       setTimeout(() => {
-        initTerminal(instanceId)
-      }, 100)
+        initTerminal(instanceId, newInstance)
+      }, 50)
 
       return instanceId
     } catch (error: any) {
-      throw new Error(`连接失败: ${error.message}`)
+      setConnectionError(`连接 ${connection.name} 失败: ${error.message}`)
+      throw error
     }
   }
 
-  const initTerminal = (instanceId: string) => {
-    const instance = terminalInstances.find(i => i.id === instanceId)
-    if (!instance) return
-
-    const terminal = new Terminal({
-      fontFamily: settings?.fontFamily || 'Consolas, monospace',
-      fontSize: settings?.fontSize || 14,
-      theme: {
-        background: '#1e1e1e',
-        foreground: '#cccccc',
-        cursor: '#ffffff',
-        selection: 'rgba(255, 255, 255, 0.3)'
-      },
-      cursorBlink: true,
-      cursorStyle: 'block',
-      scrollback: 10000
-    })
-
-    const fitAddon = new FitAddon()
-    const linksAddon = new WebLinksAddon()
-
-    terminal.loadAddon(fitAddon)
-    terminal.loadAddon(linksAddon)
-
+  const initTerminal = (instanceId: string, instance: TerminalInstance) => {
     const container = terminalRefs.current[instanceId]
-    if (container) {
+    if (!container) {
+      console.error('Container not found for instance:', instanceId)
+      return
+    }
+
+    try {
+      const terminal = new Terminal({
+        fontFamily: settings?.fontFamily || 'Consolas, monospace',
+        fontSize: settings?.fontSize || 14,
+        theme: {
+          background: '#1e1e1e',
+          foreground: '#cccccc',
+          cursor: '#ffffff',
+          selection: 'rgba(255, 255, 255, 0.3)'
+        },
+        cursorBlink: true,
+        cursorStyle: 'block',
+        scrollback: 10000
+      })
+
+      const fitAddon = new FitAddon()
+      const linksAddon = new WebLinksAddon()
+
+      terminal.loadAddon(fitAddon)
+      terminal.loadAddon(linksAddon)
+
       terminal.open(container)
       fitAddon.fit()
 
-      setTimeout(() => {
-        window.electronAPI.sshResize(
-          instance.connectionId,
-          terminal.cols,
-          terminal.rows
-        )
-      }, 100)
-
       terminal.onData((data) => {
-        window.electronAPI.sshWrite(instance.connectionId, data)
+        const inst = instancesRef.current.find(i => i.id === instanceId)
+        if (inst) {
+          window.electronAPI.sshWrite(inst.connectionId, data)
+        }
       })
 
       terminal.onResize(({ cols, rows }) => {
-        window.electronAPI.sshResize(instance.connectionId, cols, rows)
+        const inst = instancesRef.current.find(i => i.id === instanceId)
+        if (inst) {
+          window.electronAPI.sshResize(inst.connectionId, cols, rows)
+        }
       })
-    }
 
-    const updatedInstances = terminalInstances.map(i =>
-      i.id === instanceId ? { ...i, terminal, fitAddon } : i
-    )
-    setTerminalInstances(updatedInstances)
+      setTimeout(() => {
+        try {
+          fitAddon.fit()
+          window.electronAPI.sshResize(instance.connectionId, terminal.cols, terminal.rows)
+        } catch (error) {
+          console.error('Initial resize error:', error)
+        }
+      }, 100)
+
+      setTerminalInstances(prev => prev.map(i => 
+        i.id === instanceId ? { ...i, terminal, fitAddon } : i
+      ))
+
+      instancesRef.current = instancesRef.current.map(i =>
+        i.id === instanceId ? { ...i, terminal, fitAddon } : i
+      )
+
+    } catch (error) {
+      console.error('Failed to initialize terminal:', error)
+    }
   }
 
   const handleQuickCommand = async (command: string) => {
     if (!activeSessionId) return
 
-    const instance = terminalInstances.find(i => i.id === activeSessionId)
+    const instance = instancesRef.current.find(i => i.id === activeSessionId)
     if (!instance?.terminal) return
 
-    const fullCommand = command + '\r'
-    await window.electronAPI.sshWrite(instance.connectionId, fullCommand)
+    try {
+      await window.electronAPI.sshWrite(instance.connectionId, command + '\r')
+    } catch (error) {
+      console.error('Failed to send command:', error)
+    }
   }
 
   const closeTerminal = async (instanceId: string) => {
-    const instance = terminalInstances.find(i => i.id === instanceId)
+    const instance = instancesRef.current.find(i => i.id === instanceId)
     if (!instance) return
 
     if (instance.terminal) {
-      instance.terminal.dispose()
+      try {
+        instance.terminal.dispose()
+      } catch (error) {
+        console.error('Error disposing terminal:', error)
+      }
     }
 
-    await window.electronAPI.sshDisconnect(instance.connectionId)
+    try {
+      await window.electronAPI.sshDisconnect(instance.connectionId)
+    } catch (error) {
+      console.error('Error disconnecting:', error)
+    }
 
-    const updatedInstances = terminalInstances.filter(i => i.id !== instanceId)
+    const updatedInstances = instancesRef.current.filter(i => i.id !== instanceId)
     setTerminalInstances(updatedInstances)
+    instancesRef.current = updatedInstances
 
-    if (activeSessionId === instanceId && updatedInstances.length > 0) {
-      setActiveSessionId(updatedInstances[updatedInstances.length - 1].id)
-    } else if (updatedInstances.length === 0) {
-      setActiveSessionId(null)
+    if (activeSessionId === instanceId) {
+      if (updatedInstances.length > 0) {
+        setActiveSessionId(updatedInstances[0].id)
+      } else {
+        setActiveSessionId(null)
+      }
     }
   }
 
   const handleRename = (instanceId: string) => {
-    const instance = terminalInstances.find(i => i.id === instanceId)
+    const instance = instancesRef.current.find(i => i.id === instanceId)
     if (instance) {
       setEditingSessionId(instanceId)
       setEditName(instance.name)
@@ -249,10 +292,11 @@ const TerminalSessions: React.FC = () => {
 
   const saveRename = () => {
     if (editingSessionId) {
-      const updatedInstances = terminalInstances.map(i =>
+      const updatedInstances = instancesRef.current.map(i =>
         i.id === editingSessionId ? { ...i, name: editName } : i
       )
       setTerminalInstances(updatedInstances)
+      instancesRef.current = updatedInstances
       setEditingSessionId(null)
       setEditName('')
     }
@@ -271,7 +315,6 @@ const TerminalSessions: React.FC = () => {
     }
 
     setSplitPanes(prev => [...prev, newPane])
-    setActivePaneId(newPane.children[1].id)
   }
 
   const assignSessionToPane = (paneItemId: string, sessionId: string) => {
@@ -294,24 +337,12 @@ const TerminalSessions: React.FC = () => {
     })
   }
 
-  const removePane = (paneId: string) => {
+  const removePane = (paneItemId: string) => {
     setSplitPanes(prev => {
-      const removeFromPane = (panes: SplitPane[]): SplitPane[] => {
-        return panes
-          .filter(pane => pane.id !== paneId)
-          .map(pane => ({
-            ...pane,
-            children: pane.children
-              .filter(child => child.id !== paneId)
-              .map(child => {
-                if (child.children) {
-                  return { ...child, children: removeFromPane(child.children) }
-                }
-                return child
-              })
-          }))
-      }
-      return removeFromPane(prev)
+      return prev.map(pane => ({
+        ...pane,
+        children: pane.children.filter(child => child.id !== paneItemId)
+      })).filter(pane => pane.children.length > 0)
     })
   }
 
@@ -320,13 +351,18 @@ const TerminalSessions: React.FC = () => {
       <div className="sessions-sidebar">
         <div className="sidebar-header">
           <h3>连接列表</h3>
+          {connectionError && (
+            <div className="error-message">{connectionError}</div>
+          )}
         </div>
         <div className="connections-list">
           {connections.map((conn) => (
             <div
               key={conn.id}
               className="connection-item"
-              onClick={() => createTerminalInstance(conn).catch(err => alert(err.message))}
+              onClick={() => createTerminalInstance(conn).catch(err => {
+                console.error(err)
+              })}
             >
               <div className="connection-icon">💻</div>
               <div className="connection-info">
@@ -388,6 +424,7 @@ const TerminalSessions: React.FC = () => {
             <button
               className="toolbar-btn"
               onClick={() => setShowQuickCommands(!showQuickCommands)}
+              disabled={!activeSessionId}
               title="快速命令"
             >
               ⚡ 快速命令
@@ -455,10 +492,14 @@ const TerminalSessions: React.FC = () => {
                 key={instance.id}
                 ref={(el) => {
                   if (el) terminalRefs.current[instance.id] = el
+                  if (instance.terminal && el && el.children.length === 0) {
+                    instance.terminal.open(el)
+                    instance.fitAddon?.fit()
+                  }
                 }}
                 className={`terminal-wrapper ${activeSessionId === instance.id ? 'active' : ''}`}
                 style={{
-                  display: activeSessionId === instance.id ? 'flex' : 'none'
+                  display: activeSessionId === instance.id ? 'block' : 'none'
                 }}
               />
             ))
@@ -475,6 +516,11 @@ const TerminalSessions: React.FC = () => {
                         <div
                           ref={(el) => {
                             if (el) terminalRefs.current[child.sessionId!] = el
+                            const inst = instancesRef.current.find(i => i.id === child.sessionId)
+                            if (inst?.terminal && el && el.children.length === 0) {
+                              inst.terminal.open(el)
+                              inst.fitAddon?.fit()
+                            }
                           }}
                           className="terminal-wrapper active"
                         />
@@ -490,7 +536,7 @@ const TerminalSessions: React.FC = () => {
                             value=""
                           >
                             <option value="">选择会话</option>
-                            {terminalInstances.map((inst) => (
+                            {instancesRef.current.map((inst) => (
                               <option key={inst.id} value={inst.id}>
                                 {inst.name}
                               </option>

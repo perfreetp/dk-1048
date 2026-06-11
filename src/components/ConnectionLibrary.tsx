@@ -3,7 +3,11 @@ import { SSHConnection, Project, ConnectionsData, BatchConnectionResult } from '
 import { v4 as uuidv4 } from 'uuid'
 import './ConnectionLibrary.css'
 
-const ConnectionLibrary: React.FC = () => {
+interface ConnectionLibraryProps {
+  onSwitchToTerminal: () => void
+}
+
+const ConnectionLibrary: React.FC<ConnectionLibraryProps> = ({ onSwitchToTerminal }) => {
   const [connections, setConnections] = useState<SSHConnection[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [searchTerm, setSearchTerm] = useState('')
@@ -222,7 +226,7 @@ const ConnectionLibrary: React.FC = () => {
         )
         setConnections(updatedConnections)
         await saveData({ projects, connections: updatedConnections })
-        alert('连接成功！')
+        onSwitchToTerminal()
       } else {
         alert(`连接失败: ${result.message}`)
       }
@@ -256,6 +260,7 @@ const ConnectionLibrary: React.FC = () => {
     }
 
     const results: BatchConnectionResult[] = []
+    const successfulConnections: SSHConnection[] = []
     
     for (const id of Array.from(selectedConnections)) {
       const connection = connections.find(c => c.id === id)
@@ -280,6 +285,8 @@ const ConnectionLibrary: React.FC = () => {
         })
 
         if (result.success) {
+          successfulConnections.push(connection)
+          await window.electronAPI.sshStartShell(connection.id)
           const updatedConnections = connections.map((c) =>
             c.id === connection.id ? { ...c, lastConnected: Date.now() } : c
           )
@@ -301,15 +308,23 @@ const ConnectionLibrary: React.FC = () => {
     const successCount = results.filter(r => r.success).length
     const failCount = results.filter(r => !r.success).length
 
-    let message = `连接完成：成功 ${successCount} 台`
-    if (failCount > 0) {
-      message += `，失败 ${failCount} 台\n\n失败列表：\n`
-      results.filter(r => !r.success).forEach(r => {
-        message += `- ${r.connectionName}: ${r.message}\n`
-      })
+    if (successCount > 0) {
+      const failList = results.filter(r => !r.success)
+      let message = `连接完成：成功 ${successCount} 台`
+      if (failCount > 0) {
+        message += `，失败 ${failCount} 台\n\n失败列表：\n`
+        failList.forEach(r => {
+          message += `• ${r.connectionName}: ${r.message}\n`
+        })
+      }
+      message += '\n点击确定跳转到终端会话'
+      alert(message)
+      setSelectedConnections(new Set())
+      onSwitchToTerminal()
+    } else {
+      alert('所有连接均失败，请检查网络和配置')
     }
-
-    alert(message)
+    
     setBatchResults([])
   }
 
