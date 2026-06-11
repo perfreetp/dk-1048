@@ -50,23 +50,38 @@
   background-color: #d46b5d;
 }
 
-.browser-toolbar {
+.dual-panel-container {
+  display: flex;
+  gap: 20px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.file-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-secondary);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
-  padding: 16px;
-  background-color: var(--bg-secondary);
-  border-radius: 8px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color);
 }
 
-.toolbar-section {
-  display: flex;
-  gap: 10px;
+.panel-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
-.toolbar-section button {
-  padding: 8px 14px;
+.btn-small {
+  padding: 6px 12px;
   font-size: 13px;
   background-color: var(--bg-tertiary);
   color: var(--text-primary);
@@ -76,30 +91,67 @@
   transition: all 0.2s;
 }
 
-.toolbar-section button:hover:not(:disabled) {
+.btn-small:hover {
   background-color: var(--bg-hover);
   border-color: var(--accent-primary);
 }
 
-.toolbar-section button:disabled {
+.panel-toolbar {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px;
+  background-color: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.panel-toolbar button {
+  padding: 6px 12px;
+  font-size: 13px;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.panel-toolbar button:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  border-color: var(--accent-primary);
+}
+
+.panel-toolbar button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.btn-upload, .btn-download {
+  background-color: var(--accent-primary) !important;
+  color: white !important;
+  border-color: var(--accent-primary) !important;
+}
+
+.btn-upload:hover:not(:disabled), .btn-download:hover:not(:disabled) {
+  background-color: var(--accent-secondary) !important;
 }
 
 .current-path {
   display: flex;
   align-items: center;
   gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .current-path span {
   font-size: 13px;
   color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
 .current-path input {
-  width: 300px;
-  padding: 8px 12px;
+  flex: 1;
+  padding: 6px 10px;
   font-size: 13px;
   background-color: var(--bg-tertiary);
   border: 1px solid var(--border-color);
@@ -111,21 +163,29 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  background-color: var(--bg-secondary);
-  border-radius: 8px;
   overflow: hidden;
+  transition: all 0.2s;
+}
+
+.files-container.drag-over {
+  background-color: rgba(0, 122, 204, 0.1);
+  border: 2px dashed var(--accent-primary);
 }
 
 .files-header {
   display: grid;
   grid-template-columns: 1fr 120px 180px 120px;
   gap: 16px;
-  padding: 12px 20px;
+  padding: 10px 16px;
   background-color: var(--bg-tertiary);
   font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-color);
+}
+
+.local-panel .files-header {
+  grid-template-columns: 1fr 120px;
 }
 
 .files-list {
@@ -143,11 +203,15 @@
   display: grid;
   grid-template-columns: 1fr 120px 180px 120px;
   gap: 16px;
-  padding: 12px 20px;
+  padding: 10px 16px;
   align-items: center;
   border-bottom: 1px solid var(--border-color);
   cursor: pointer;
   transition: background-color 0.2s;
+}
+
+.local-panel .file-item {
+  grid-template-columns: 1fr 120px;
 }
 
 .file-item:hover {
@@ -340,4 +404,30 @@
 .modal-actions button {
   padding: 8px 16px;
   font-size: 14px;
+}
+
+.btn-primary {
+  background-color: var(--accent-primary);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.btn-primary:hover {
+  background-color: var(--accent-secondary);
+}
+
+.btn-secondary {
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+  background-color: var(--bg-hover);
 }

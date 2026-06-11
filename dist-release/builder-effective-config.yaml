@@ -1,0 +1,17 @@
+directories:
+  output: dist-release
+  buildResources: build
+appId: com.sshmanager.app
+productName: SSH Manager
+files:
+  - filter:
+      - dist/**/*
+      - dist-electron/**/*
+win:
+  target: nsis
+  icon: public/icon.ico
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+electronVersion: 27.3.11

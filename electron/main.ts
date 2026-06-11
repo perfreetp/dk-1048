@@ -1,11 +1,18 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
 import path from 'path'
-import { Client } from 'ssh2'
+import { Client, ClientChannel } from 'ssh2'
 import fs from 'fs'
 import os from 'os'
 
 let mainWindow: BrowserWindow | null = null
-const connections = new Map<string, Client>()
+
+interface SSHConnection {
+  client: Client
+  shell?: ClientChannel
+}
+
+const connections = new Map<string, SSHConnection>()
+const shells = new Map<string, ClientChannel>()
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -46,7 +53,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   connections.forEach((conn) => {
-    conn.end()
+    conn.client.end()
   })
   if (process.platform !== 'darwin') {
     app.quit()
@@ -146,7 +153,7 @@ ipcMain.handle('ssh-connect', async (event, { id, host, port, username, password
     }
 
     conn.on('ready', () => {
-      connections.set(id, conn)
+      connections.set(id, { client: conn })
       resolve({ success: true, message: 'Connected successfully' })
     })
 
@@ -161,8 +168,12 @@ ipcMain.handle('ssh-connect', async (event, { id, host, port, username, password
 ipcMain.handle('ssh-disconnect', async (_, id) => {
   const conn = connections.get(id)
   if (conn) {
-    conn.end()
+    if (conn.shell) {
+      conn.shell.end()
+    }
+    conn.client.end()
     connections.delete(id)
+    shells.delete(id)
     return { success: true }
   }
   return { success: false, message: 'Connection not found' }
@@ -176,7 +187,7 @@ ipcMain.handle('ssh-exec', async (event, { id, command }) => {
       return
     }
 
-    conn.exec(command, (err, stream) => {
+    conn.client.exec(command, (err, stream) => {
       if (err) {
         reject({ success: false, message: err.message })
         return
@@ -205,34 +216,74 @@ ipcMain.handle('ssh-exec', async (event, { id, command }) => {
   })
 })
 
-ipcMain.handle('ssh-shell', async (event, { id }) => {
+ipcMain.handle('ssh-start-shell', async (event, { id }) => {
   return new Promise((resolve, reject) => {
-    const conn = connections.get(id)
-    if (!conn) {
+    const connData = connections.get(id)
+    if (!connData) {
       reject({ success: false, message: 'Connection not found' })
       return
     }
 
-    conn.shell((err, stream) => {
+    connData.client.shell((err, stream) => {
       if (err) {
         reject({ success: false, message: err.message })
         return
       }
 
-      resolve({ success: true, streamId: id })
+      connData.shell = stream
+      shells.set(id, stream)
+
+      stream.on('data', (data: Buffer) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ssh-shell-data', { id, data: data.toString() })
+        }
+      })
+
+      stream.on('close', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ssh-shell-close', { id })
+        }
+        shells.delete(id)
+      })
+
+      stream.stderr.on('data', (data: Buffer) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ssh-shell-data', { id, data: data.toString() })
+        }
+      })
+
+      resolve({ success: true })
     })
   })
 })
 
+ipcMain.handle('ssh-write', async (_, { id, data }) => {
+  const stream = shells.get(id)
+  if (stream) {
+    stream.write(data)
+    return { success: true }
+  }
+  return { success: false, message: 'Shell not found' }
+})
+
+ipcMain.handle('ssh-resize', async (_, { id, cols, rows }) => {
+  const stream = shells.get(id)
+  if (stream) {
+    stream.setWindow(rows, cols, 0, 0)
+    return { success: true }
+  }
+  return { success: false, message: 'Shell not found' }
+})
+
 ipcMain.handle('ssh-sftp-list', async (event, { id, path: dirPath }) => {
   return new Promise((resolve, reject) => {
-    const conn = connections.get(id)
-    if (!conn) {
+    const connData = connections.get(id)
+    if (!connData) {
       reject({ success: false, message: 'Connection not found' })
       return
     }
 
-    conn.sftp((err, sftp) => {
+    connData.client.sftp((err, sftp) => {
       if (err) {
         reject({ success: false, message: err.message })
         return
@@ -259,13 +310,13 @@ ipcMain.handle('ssh-sftp-list', async (event, { id, path: dirPath }) => {
 
 ipcMain.handle('ssh-sftp-read-file', async (event, { id, path: filePath }) => {
   return new Promise((resolve, reject) => {
-    const conn = connections.get(id)
-    if (!conn) {
+    const connData = connections.get(id)
+    if (!connData) {
       reject({ success: false, message: 'Connection not found' })
       return
     }
 
-    conn.sftp((err, sftp) => {
+    connData.client.sftp((err, sftp) => {
       if (err) {
         reject({ success: false, message: err.message })
         return
@@ -291,13 +342,13 @@ ipcMain.handle('ssh-sftp-read-file', async (event, { id, path: filePath }) => {
 
 ipcMain.handle('ssh-sftp-write-file', async (event, { id, path: filePath, content }) => {
   return new Promise((resolve, reject) => {
-    const conn = connections.get(id)
-    if (!conn) {
+    const connData = connections.get(id)
+    if (!connData) {
       reject({ success: false, message: 'Connection not found' })
       return
     }
 
-    conn.sftp((err, sftp) => {
+    connData.client.sftp((err, sftp) => {
       if (err) {
         reject({ success: false, message: err.message })
         return
@@ -321,13 +372,13 @@ ipcMain.handle('ssh-sftp-write-file', async (event, { id, path: filePath, conten
 
 ipcMain.handle('ssh-sftp-mkdir', async (event, { id, path: dirPath }) => {
   return new Promise((resolve, reject) => {
-    const conn = connections.get(id)
-    if (!conn) {
+    const connData = connections.get(id)
+    if (!connData) {
       reject({ success: false, message: 'Connection not found' })
       return
     }
 
-    conn.sftp((err, sftp) => {
+    connData.client.sftp((err, sftp) => {
       if (err) {
         reject({ success: false, message: err.message })
         return
@@ -346,13 +397,13 @@ ipcMain.handle('ssh-sftp-mkdir', async (event, { id, path: dirPath }) => {
 
 ipcMain.handle('ssh-sftp-rmdir', async (event, { id, path: dirPath }) => {
   return new Promise((resolve, reject) => {
-    const conn = connections.get(id)
-    if (!conn) {
+    const connData = connections.get(id)
+    if (!connData) {
       reject({ success: false, message: 'Connection not found' })
       return
     }
 
-    conn.sftp((err, sftp) => {
+    connData.client.sftp((err, sftp) => {
       if (err) {
         reject({ success: false, message: err.message })
         return
@@ -371,13 +422,13 @@ ipcMain.handle('ssh-sftp-rmdir', async (event, { id, path: dirPath }) => {
 
 ipcMain.handle('ssh-sftp-delete', async (event, { id, path: filePath }) => {
   return new Promise((resolve, reject) => {
-    const conn = connections.get(id)
-    if (!conn) {
+    const connData = connections.get(id)
+    if (!connData) {
       reject({ success: false, message: 'Connection not found' })
       return
     }
 
-    conn.sftp((err, sftp) => {
+    connData.client.sftp((err, sftp) => {
       if (err) {
         reject({ success: false, message: err.message })
         return
@@ -396,13 +447,13 @@ ipcMain.handle('ssh-sftp-delete', async (event, { id, path: filePath }) => {
 
 ipcMain.handle('ssh-sftp-rename', async (event, { id, oldPath, newPath }) => {
   return new Promise((resolve, reject) => {
-    const conn = connections.get(id)
-    if (!conn) {
+    const connData = connections.get(id)
+    if (!connData) {
       reject({ success: false, message: 'Connection not found' })
       return
     }
 
-    conn.sftp((err, sftp) => {
+    connData.client.sftp((err, sftp) => {
       if (err) {
         reject({ success: false, message: err.message })
         return
@@ -417,6 +468,71 @@ ipcMain.handle('ssh-sftp-rename', async (event, { id, oldPath, newPath }) => {
       })
     })
   })
+})
+
+ipcMain.handle('ssh-sftp-upload', async (event, { id, localPath, remotePath }) => {
+  return new Promise((resolve, reject) => {
+    const connData = connections.get(id)
+    if (!connData) {
+      reject({ success: false, message: 'Connection not found' })
+      return
+    }
+
+    connData.client.sftp((err, sftp) => {
+      if (err) {
+        reject({ success: false, message: err.message })
+        return
+      }
+
+      sftp.fastPut(localPath, remotePath, (err) => {
+        if (err) {
+          reject({ success: false, message: err.message })
+          return
+        }
+        resolve({ success: true })
+      })
+    })
+  })
+})
+
+ipcMain.handle('ssh-sftp-download', async (event, { id, remotePath, localPath }) => {
+  return new Promise((resolve, reject) => {
+    const connData = connections.get(id)
+    if (!connData) {
+      reject({ success: false, message: 'Connection not found' })
+      return
+    }
+
+    connData.client.sftp((err, sftp) => {
+      if (err) {
+        reject({ success: false, message: err.message })
+        return
+      }
+
+      sftp.fastGet(remotePath, localPath, (err) => {
+        if (err) {
+          reject({ success: false, message: err.message })
+          return
+        }
+        resolve({ success: true })
+      })
+    })
+  })
+})
+
+ipcMain.handle('local-list', async (_, dirPath) => {
+  try {
+    const items = fs.readdirSync(dirPath, { withFileTypes: true })
+    const files = items.map(item => ({
+      name: item.name,
+      isDirectory: item.isDirectory(),
+      isFile: item.isFile(),
+      path: path.join(dirPath, item.name)
+    }))
+    return { success: true, files, currentPath: dirPath }
+  } catch (error: any) {
+    return { success: false, message: error.message }
+  }
 })
 
 ipcMain.handle('select-private-key', async () => {
@@ -443,6 +559,18 @@ ipcMain.handle('open-external', async (_, url) => {
 
 ipcMain.handle('get-home-directory', async () => {
   return os.homedir()
+})
+
+ipcMain.handle('select-directory', async () => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    properties: ['openDirectory']
+  })
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null
+  }
+
+  return result.filePaths[0]
 })
 
 export {}

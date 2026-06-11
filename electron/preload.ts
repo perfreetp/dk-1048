@@ -10,7 +10,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sshConnect: (config: any) => ipcRenderer.invoke('ssh-connect', config),
   sshDisconnect: (id: string) => ipcRenderer.invoke('ssh-disconnect', id),
   sshExec: (id: string, command: string) => ipcRenderer.invoke('ssh-exec', { id, command }),
-  sshShell: (id: string) => ipcRenderer.invoke('ssh-shell', { id }),
+  sshStartShell: (id: string) => ipcRenderer.invoke('ssh-start-shell', { id }),
+  sshWrite: (id: string, data: string) => ipcRenderer.invoke('ssh-write', { id, data }),
+  sshResize: (id: string, cols: number, rows: number) => ipcRenderer.invoke('ssh-resize', { id, cols, rows }),
   sshSftpList: (id: string, path: string) => ipcRenderer.invoke('ssh-sftp-list', { id, path }),
   sshSftpReadFile: (id: string, path: string) => ipcRenderer.invoke('ssh-sftp-read-file', { id, path }),
   sshSftpWriteFile: (id: string, path: string, content: string) => ipcRenderer.invoke('ssh-sftp-write-file', { id, path, content }),
@@ -18,7 +20,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sshSftpRmdir: (id: string, path: string) => ipcRenderer.invoke('ssh-sftp-rmdir', { id, path }),
   sshSftpDelete: (id: string, path: string) => ipcRenderer.invoke('ssh-sftp-delete', { id, path }),
   sshSftpRename: (id: string, oldPath: string, newPath: string) => ipcRenderer.invoke('ssh-sftp-rename', { id, oldPath, newPath }),
+  sshSftpUpload: (id: string, localPath: string, remotePath: string) => ipcRenderer.invoke('ssh-sftp-upload', { id, localPath, remotePath }),
+  sshSftpDownload: (id: string, remotePath: string, localPath: string) => ipcRenderer.invoke('ssh-sftp-download', { id, remotePath, localPath }),
+  localList: (dirPath: string) => ipcRenderer.invoke('local-list', dirPath),
   selectPrivateKey: () => ipcRenderer.invoke('select-private-key'),
+  selectDirectory: () => ipcRenderer.invoke('select-directory'),
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
-  getHomeDirectory: () => ipcRenderer.invoke('get-home-directory')
+  getHomeDirectory: () => ipcRenderer.invoke('get-home-directory'),
+  onShellData: (callback: (data: { id: string; data: string }) => void) => {
+    ipcRenderer.on('ssh-shell-data', (_, data) => callback(data))
+  },
+  onShellClose: (callback: (data: { id: string }) => void) => {
+    ipcRenderer.on('ssh-shell-close', (_, data) => callback(data))
+  }
 })

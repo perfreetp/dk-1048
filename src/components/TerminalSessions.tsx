@@ -6,26 +6,38 @@ import { SSHConnection, Settings } from '../types'
 import 'xterm/css/xterm.css'
 import './TerminalSessions.css'
 
-interface Session {
+interface TerminalInstance {
   id: string
   name: string
   connectionId: string
-  connection: SSHConnection
   terminal: Terminal | null
   fitAddon: FitAddon | null
-  isActive: boolean
-  shellStream?: any
+  connection: SSHConnection
+}
+
+interface SplitPane {
+  id: string
+  direction: 'horizontal' | 'vertical'
+  children: SplitPaneItem[]
+}
+
+interface SplitPaneItem {
+  id: string
+  sessionId?: string
+  children?: SplitPane[]
 }
 
 const TerminalSessions: React.FC = () => {
-  const [sessions, setSessions] = useState<Session[]>([])
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [connections, setConnections] = useState<SSHConnection[]>([])
+  const [terminalInstances, setTerminalInstances] = useState<TerminalInstance[]>([])
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [showQuickCommands, setShowQuickCommands] = useState(false)
   const [highlightKeywords, setHighlightKeywords] = useState<string[]>([])
   const [settings, setSettings] = useState<Settings | null>(null)
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
+  const [splitPanes, setSplitPanes] = useState<SplitPane[]>([])
+  const [activePaneId, setActivePaneId] = useState<string | null>(null)
   const terminalRefs = useRef<{ [key: string]: HTMLDivElement }>({})
 
   const quickCommands = [
@@ -40,20 +52,50 @@ const TerminalSessions: React.FC = () => {
   useEffect(() => {
     loadConnections()
     loadSettings()
+    setupShellListeners()
+
+    return () => {
+      terminalInstances.forEach(instance => {
+        if (instance.terminal) {
+          instance.terminal.dispose()
+        }
+      })
+    }
   }, [])
 
   useEffect(() => {
     const handleResize = () => {
-      sessions.forEach((session) => {
-        if (session.terminal && session.fitAddon && session.isActive) {
-          session.fitAddon.fit()
+      terminalInstances.forEach(instance => {
+        if (instance.terminal && instance.fitAddon) {
+          instance.fitAddon.fit()
+          window.electronAPI.sshResize(
+            instance.connectionId,
+            instance.terminal.cols,
+            instance.terminal.rows
+          )
         }
       })
     }
 
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
-  }, [sessions])
+  }, [terminalInstances])
+
+  const setupShellListeners = () => {
+    window.electronAPI.onShellData(({ id, data }) => {
+      const instance = terminalInstances.find(inst => inst.connectionId === id)
+      if (instance?.terminal) {
+        instance.terminal.write(data)
+      }
+    })
+
+    window.electronAPI.onShellClose(({ id }) => {
+      const instance = terminalInstances.find(inst => inst.connectionId === id)
+      if (instance?.terminal) {
+        instance.terminal.write('\r\n\x1b[33m[Connection closed]\x1b[0m\r\n')
+      }
+    })
+  }
 
   const loadConnections = async () => {
     try {
@@ -73,8 +115,8 @@ const TerminalSessions: React.FC = () => {
     }
   }
 
-  const createSession = async (connection: SSHConnection) => {
-    const sessionId = `session-${Date.now()}`
+  const createTerminalInstance = async (connection: SSHConnection): Promise<string> => {
+    const instanceId = `terminal-${Date.now()}`
     
     try {
       const result = await window.electronAPI.sshConnect({
@@ -88,34 +130,36 @@ const TerminalSessions: React.FC = () => {
       })
 
       if (!result.success) {
-        alert(`连接失败: ${result.message}`)
-        return
+        throw new Error(result.message)
       }
 
-      const newSession: Session = {
-        id: sessionId,
+      await window.electronAPI.sshStartShell(connection.id)
+
+      const newInstance: TerminalInstance = {
+        id: instanceId,
         name: connection.name,
         connectionId: connection.id,
-        connection,
         terminal: null,
         fitAddon: null,
-        isActive: sessions.length === 0
+        connection
       }
 
-      setSessions([...sessions, newSession])
-      setActiveSessionId(sessionId)
+      setTerminalInstances(prev => [...prev, newInstance])
+      setActiveSessionId(instanceId)
 
       setTimeout(() => {
-        initTerminal(sessionId)
+        initTerminal(instanceId)
       }, 100)
-    } catch (error) {
-      alert('连接失败，请检查配置和网络')
+
+      return instanceId
+    } catch (error: any) {
+      throw new Error(`连接失败: ${error.message}`)
     }
   }
 
-  const initTerminal = (sessionId: string) => {
-    const session = sessions.find((s) => s.id === sessionId)
-    if (!session) return
+  const initTerminal = (instanceId: string) => {
+    const instance = terminalInstances.find(i => i.id === instanceId)
+    if (!instance) return
 
     const terminal = new Terminal({
       fontFamily: settings?.fontFamily || 'Consolas, monospace',
@@ -137,122 +181,138 @@ const TerminalSessions: React.FC = () => {
     terminal.loadAddon(fitAddon)
     terminal.loadAddon(linksAddon)
 
-    const terminalContainer = terminalRefs.current[sessionId]
-    if (terminalContainer) {
-      terminal.open(terminalContainer)
+    const container = terminalRefs.current[instanceId]
+    if (container) {
+      terminal.open(container)
       fitAddon.fit()
 
-      terminal.writeln(`\x1b[36mConnecting to ${session.name}...\x1b[0m`)
-      terminal.writeln('')
-
-      startShell(sessionId, terminal)
-    }
-
-    const updatedSessions = sessions.map((s) =>
-      s.id === sessionId ? { ...s, terminal, fitAddon } : s
-    )
-    setSessions(updatedSessions)
-  }
-
-  const startShell = (sessionId: string, terminal: Terminal) => {
-    const session = sessions.find((s) => s.id === sessionId)
-    if (!session) return
-
-    const conn = session.connection
-
-    fetch(`/api/ssh-shell/${conn.id}`, {
-      method: 'POST'
-    })
-      .then((res) => res.json())
-      .catch(() => {
-        terminal.writeln('\x1b[31mFailed to start shell session\x1b[0m')
-      })
-  }
-
-  const handleCommand = (command: string) => {
-    const activeSession = sessions.find((s) => s.id === activeSessionId)
-    if (!activeSession?.terminal) return
-
-    const terminal = activeSession.terminal
-    terminal.writeln(`\x1b[36m${command}\x1b[0m`)
-
-    window.electronAPI
-      .sshExec(activeSession.connectionId, command)
-      .then((result) => {
-        if (result.success) {
-          if (result.output) {
-            highlightAndWrite(terminal, result.output)
-          }
-          if (result.errorOutput) {
-            terminal.writeln(`\x1b[31m${result.errorOutput}\x1b[0m`)
-          }
-        } else {
-          terminal.writeln(`\x1b[31mError: ${result.message}\x1b[0m`)
-        }
-        prompt(terminal)
-      })
-      .catch((error) => {
-        terminal.writeln(`\x1b[31mError: ${error.message}\x1b[0m`)
-        prompt(terminal)
-      })
-  }
-
-  const highlightAndWrite = (terminal: Terminal, text: string) => {
-    const lines = text.split('\n')
-    lines.forEach((line) => {
-      let highlighted = line
-      highlightKeywords.forEach((keyword) => {
-        const regex = new RegExp(`(${keyword})`, 'gi')
-        highlighted = highlighted.replace(
-          regex,
-          '\x1b[33m$1\x1b[0m'
+      setTimeout(() => {
+        window.electronAPI.sshResize(
+          instance.connectionId,
+          terminal.cols,
+          terminal.rows
         )
+      }, 100)
+
+      terminal.onData((data) => {
+        window.electronAPI.sshWrite(instance.connectionId, data)
       })
-      terminal.writeln(highlighted)
-    })
-  }
 
-  const prompt = (terminal: Terminal) => {
-    terminal.write('\r\n\x1b[32m$\x1b[0m ')
-  }
-
-  const closeSession = async (sessionId: string) => {
-    const session = sessions.find((s) => s.id === sessionId)
-    if (!session) return
-
-    if (session.terminal) {
-      session.terminal.dispose()
+      terminal.onResize(({ cols, rows }) => {
+        window.electronAPI.sshResize(instance.connectionId, cols, rows)
+      })
     }
 
-    await window.electronAPI.sshDisconnect(session.connectionId)
+    const updatedInstances = terminalInstances.map(i =>
+      i.id === instanceId ? { ...i, terminal, fitAddon } : i
+    )
+    setTerminalInstances(updatedInstances)
+  }
 
-    const updatedSessions = sessions.filter((s) => s.id !== sessionId)
-    setSessions(updatedSessions)
+  const handleQuickCommand = async (command: string) => {
+    if (!activeSessionId) return
 
-    if (activeSessionId === sessionId && updatedSessions.length > 0) {
-      setActiveSessionId(updatedSessions[updatedSessions.length - 1].id)
-    } else if (updatedSessions.length === 0) {
+    const instance = terminalInstances.find(i => i.id === activeSessionId)
+    if (!instance?.terminal) return
+
+    const fullCommand = command + '\r'
+    await window.electronAPI.sshWrite(instance.connectionId, fullCommand)
+  }
+
+  const closeTerminal = async (instanceId: string) => {
+    const instance = terminalInstances.find(i => i.id === instanceId)
+    if (!instance) return
+
+    if (instance.terminal) {
+      instance.terminal.dispose()
+    }
+
+    await window.electronAPI.sshDisconnect(instance.connectionId)
+
+    const updatedInstances = terminalInstances.filter(i => i.id !== instanceId)
+    setTerminalInstances(updatedInstances)
+
+    if (activeSessionId === instanceId && updatedInstances.length > 0) {
+      setActiveSessionId(updatedInstances[updatedInstances.length - 1].id)
+    } else if (updatedInstances.length === 0) {
       setActiveSessionId(null)
     }
   }
 
-  const handleRename = (sessionId: string) => {
-    const session = sessions.find((s) => s.id === sessionId)
-    if (session) {
-      setEditingSessionId(sessionId)
-      setEditName(session.name)
+  const handleRename = (instanceId: string) => {
+    const instance = terminalInstances.find(i => i.id === instanceId)
+    if (instance) {
+      setEditingSessionId(instanceId)
+      setEditName(instance.name)
     }
   }
 
   const saveRename = () => {
     if (editingSessionId) {
-      const updatedSessions = sessions.map((s) =>
-        s.id === editingSessionId ? { ...s, name: editName } : s
+      const updatedInstances = terminalInstances.map(i =>
+        i.id === editingSessionId ? { ...i, name: editName } : i
       )
-      setSessions(updatedSessions)
+      setTerminalInstances(updatedInstances)
       setEditingSessionId(null)
       setEditName('')
     }
+  }
+
+  const splitTerminal = (direction: 'horizontal' | 'vertical') => {
+    if (!activeSessionId) return
+
+    const newPane: SplitPane = {
+      id: `pane-${Date.now()}`,
+      direction,
+      children: [
+        { id: `pane-item-${Date.now()}-1`, sessionId: activeSessionId },
+        { id: `pane-item-${Date.now()}-2` }
+      ]
+    }
+
+    setSplitPanes(prev => [...prev, newPane])
+    setActivePaneId(newPane.children[1].id)
+  }
+
+  const assignSessionToPane = (paneItemId: string, sessionId: string) => {
+    setSplitPanes(prev => {
+      const updatePane = (panes: SplitPane[]): SplitPane[] => {
+        return panes.map(pane => ({
+          ...pane,
+          children: pane.children.map(child => {
+            if (child.id === paneItemId) {
+              return { ...child, sessionId }
+            }
+            if (child.children) {
+              return { ...child, children: updatePane(child.children) }
+            }
+            return child
+          })
+        }))
+      }
+      return updatePane(prev)
+    })
+  }
+
+  const removePane = (paneId: string) => {
+    setSplitPanes(prev => {
+      const removeFromPane = (panes: SplitPane[]): SplitPane[] => {
+        return panes
+          .filter(pane => pane.id !== paneId)
+          .map(pane => ({
+            ...pane,
+            children: pane.children
+              .filter(child => child.id !== paneId)
+              .map(child => {
+                if (child.children) {
+                  return { ...child, children: removeFromPane(child.children) }
+                }
+                return child
+              })
+          }))
+      }
+      return removeFromPane(prev)
+    })
   }
 
   return (
@@ -266,7 +326,7 @@ const TerminalSessions: React.FC = () => {
             <div
               key={conn.id}
               className="connection-item"
-              onClick={() => createSession(conn)}
+              onClick={() => createTerminalInstance(conn).catch(err => alert(err.message))}
             >
               <div className="connection-icon">💻</div>
               <div className="connection-info">
@@ -282,13 +342,13 @@ const TerminalSessions: React.FC = () => {
 
       <div className="sessions-main">
         <div className="sessions-tabs">
-          {sessions.map((session) => (
+          {terminalInstances.map((instance) => (
             <div
-              key={session.id}
-              className={`session-tab ${activeSessionId === session.id ? 'active' : ''}`}
-              onClick={() => setActiveSessionId(session.id)}
+              key={instance.id}
+              className={`session-tab ${activeSessionId === instance.id ? 'active' : ''}`}
+              onClick={() => setActiveSessionId(instance.id)}
             >
-              {editingSessionId === session.id ? (
+              {editingSessionId === instance.id ? (
                 <input
                   type="text"
                   value={editName}
@@ -304,17 +364,17 @@ const TerminalSessions: React.FC = () => {
                   className="tab-name"
                   onDoubleClick={(e) => {
                     e.stopPropagation()
-                    handleRename(session.id)
+                    handleRename(instance.id)
                   }}
                 >
-                  {session.name}
+                  {instance.name}
                 </span>
               )}
               <button
                 className="tab-close"
                 onClick={(e) => {
                   e.stopPropagation()
-                  closeSession(session.id)
+                  closeTerminal(instance.id)
                 }}
               >
                 ×
@@ -331,6 +391,22 @@ const TerminalSessions: React.FC = () => {
               title="快速命令"
             >
               ⚡ 快速命令
+            </button>
+            <button
+              className="toolbar-btn"
+              onClick={() => splitTerminal('horizontal')}
+              disabled={!activeSessionId}
+              title="左右分屏"
+            >
+              ⬌
+            </button>
+            <button
+              className="toolbar-btn"
+              onClick={() => splitTerminal('vertical')}
+              disabled={!activeSessionId}
+              title="上下分屏"
+            >
+              ⬍
             </button>
           </div>
           <div className="toolbar-right">
@@ -355,7 +431,7 @@ const TerminalSessions: React.FC = () => {
                 key={idx}
                 className="quick-command-btn"
                 onClick={() => {
-                  handleCommand(cmd.command)
+                  handleQuickCommand(cmd.command)
                   setShowQuickCommands(false)
                 }}
               >
@@ -367,25 +443,73 @@ const TerminalSessions: React.FC = () => {
         )}
 
         <div className="terminals-container">
-          {sessions.length === 0 ? (
+          {terminalInstances.length === 0 ? (
             <div className="empty-terminals">
               <div className="empty-icon">💻</div>
               <h3>暂无活动会话</h3>
               <p>从左侧选择一个连接来开始会话</p>
             </div>
-          ) : (
-            sessions.map((session) => (
+          ) : splitPanes.length === 0 ? (
+            terminalInstances.map((instance) => (
               <div
-                key={session.id}
+                key={instance.id}
                 ref={(el) => {
-                  if (el) terminalRefs.current[session.id] = el
+                  if (el) terminalRefs.current[instance.id] = el
                 }}
-                className={`terminal-wrapper ${activeSessionId === session.id ? 'active' : ''}`}
+                className={`terminal-wrapper ${activeSessionId === instance.id ? 'active' : ''}`}
                 style={{
-                  display: activeSessionId === session.id ? 'flex' : 'none'
+                  display: activeSessionId === instance.id ? 'flex' : 'none'
                 }}
               />
             ))
+          ) : (
+            <div className="split-container">
+              {splitPanes.map((pane) => (
+                <div
+                  key={pane.id}
+                  className={`split-pane ${pane.direction}`}
+                >
+                  {pane.children.map((child) => (
+                    <div key={child.id} className="split-pane-item">
+                      {child.sessionId ? (
+                        <div
+                          ref={(el) => {
+                            if (el) terminalRefs.current[child.sessionId!] = el
+                          }}
+                          className="terminal-wrapper active"
+                        />
+                      ) : (
+                        <div className="empty-pane">
+                          <p>选择一个会话来填充此区域</p>
+                          <select
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                assignSessionToPane(child.id, e.target.value)
+                              }
+                            }}
+                            value=""
+                          >
+                            <option value="">选择会话</option>
+                            {terminalInstances.map((inst) => (
+                              <option key={inst.id} value={inst.id}>
+                                {inst.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                      <button
+                        className="pane-close-btn"
+                        onClick={() => removePane(child.id)}
+                        title="关闭此面板"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { SSHConnection, Project, ConnectionsData } from '../types'
+import { SSHConnection, Project, ConnectionsData, BatchConnectionResult } from '../types'
 import { v4 as uuidv4 } from 'uuid'
 import './ConnectionLibrary.css'
 
@@ -10,7 +10,9 @@ const ConnectionLibrary: React.FC = () => {
   const [selectedProject, setSelectedProject] = useState<string>('all')
   const [showFavorites, setShowFavorites] = useState(false)
   const [showModal, setShowModal] = useState(false)
+  const [modalType, setModalType] = useState<'connection' | 'project'>('connection')
   const [editingConnection, setEditingConnection] = useState<SSHConnection | null>(null)
+  const [editingProject, setEditingProject] = useState<Project | null>(null)
   const [formData, setFormData] = useState<Partial<SSHConnection>>({
     name: '',
     host: '',
@@ -23,6 +25,12 @@ const ConnectionLibrary: React.FC = () => {
     projectId: '',
     isFavorite: false
   })
+  const [projectFormData, setProjectFormData] = useState<Partial<Project>>({
+    name: '',
+    color: '#007acc'
+  })
+  const [selectedConnections, setSelectedConnections] = useState<Set<string>>(new Set())
+  const [batchResults, setBatchResults] = useState<BatchConnectionResult[]>([])
 
   useEffect(() => {
     loadData()
@@ -63,24 +71,39 @@ const ConnectionLibrary: React.FC = () => {
     return matchesSearch && matchesProject && matchesFavorites
   })
 
-  const handleOpenModal = (connection?: SSHConnection) => {
-    if (connection) {
-      setEditingConnection(connection)
-      setFormData(connection)
+  const handleOpenModal = (type: 'connection' | 'project', item?: any) => {
+    setModalType(type)
+    
+    if (type === 'connection') {
+      if (item) {
+        setEditingConnection(item)
+        setFormData(item)
+      } else {
+        setEditingConnection(null)
+        setFormData({
+          name: '',
+          host: '',
+          port: 22,
+          username: '',
+          authType: 'password',
+          password: '',
+          tags: [],
+          notes: '',
+          projectId: '',
+          isFavorite: false
+        })
+      }
     } else {
-      setEditingConnection(null)
-      setFormData({
-        name: '',
-        host: '',
-        port: 22,
-        username: '',
-        authType: 'password',
-        password: '',
-        tags: [],
-        notes: '',
-        projectId: '',
-        isFavorite: false
-      })
+      if (item) {
+        setEditingProject(item)
+        setProjectFormData(item)
+      } else {
+        setEditingProject(null)
+        setProjectFormData({
+          name: '',
+          color: '#007acc'
+        })
+      }
     }
     setShowModal(true)
   }
@@ -88,6 +111,7 @@ const ConnectionLibrary: React.FC = () => {
   const handleCloseModal = () => {
     setShowModal(false)
     setEditingConnection(null)
+    setEditingProject(null)
   }
 
   const handleSelectPrivateKey = async () => {
@@ -97,7 +121,7 @@ const ConnectionLibrary: React.FC = () => {
     }
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleConnectionSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
     const connection: SSHConnection = {
@@ -129,11 +153,46 @@ const ConnectionLibrary: React.FC = () => {
     handleCloseModal()
   }
 
-  const handleDelete = async (id: string) => {
+  const handleProjectSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    const project: Project = {
+      id: editingProject?.id || uuidv4(),
+      name: projectFormData.name!,
+      color: projectFormData.color!
+    }
+
+    let updatedProjects: Project[]
+    if (editingProject) {
+      updatedProjects = projects.map((p) => (p.id === project.id ? project : p))
+    } else {
+      updatedProjects = [...projects, project]
+    }
+
+    setProjects(updatedProjects)
+    await saveData({ projects: updatedProjects, connections })
+    handleCloseModal()
+  }
+
+  const handleDeleteConnection = async (id: string) => {
     if (confirm('确定要删除这个连接吗？')) {
       const updatedConnections = connections.filter((c) => c.id !== id)
       setConnections(updatedConnections)
       await saveData({ projects, connections: updatedConnections })
+      selectedConnections.delete(id)
+      setSelectedConnections(new Set(selectedConnections))
+    }
+  }
+
+  const handleDeleteProject = async (id: string) => {
+    if (confirm('确定要删除这个项目吗？该操作不会删除项目下的连接。')) {
+      const updatedProjects = projects.filter((p) => p.id !== id)
+      const updatedConnections = connections.map((c) =>
+        c.projectId === id ? { ...c, projectId: undefined } : c
+      )
+      setProjects(updatedProjects)
+      setConnections(updatedConnections)
+      await saveData({ projects: updatedProjects, connections: updatedConnections })
     }
   }
 
@@ -172,22 +231,104 @@ const ConnectionLibrary: React.FC = () => {
     }
   }
 
-  const handleBatchOpen = async (selectedIds: string[]) => {
-    for (const id of selectedIds) {
-      const connection = connections.find((c) => c.id === id)
-      if (connection) {
-        await handleConnect(connection)
+  const toggleSelectConnection = (id: string) => {
+    const newSelected = new Set(selectedConnections)
+    if (newSelected.has(id)) {
+      newSelected.delete(id)
+    } else {
+      newSelected.add(id)
+    }
+    setSelectedConnections(newSelected)
+  }
+
+  const handleSelectAll = () => {
+    if (selectedConnections.size === filteredConnections.length) {
+      setSelectedConnections(new Set())
+    } else {
+      setSelectedConnections(new Set(filteredConnections.map(c => c.id)))
+    }
+  }
+
+  const handleBatchConnect = async () => {
+    if (selectedConnections.size === 0) {
+      alert('请先选择要连接的服务器')
+      return
+    }
+
+    const results: BatchConnectionResult[] = []
+    
+    for (const id of Array.from(selectedConnections)) {
+      const connection = connections.find(c => c.id === id)
+      if (!connection) continue
+
+      try {
+        const result = await window.electronAPI.sshConnect({
+          id: connection.id,
+          host: connection.host,
+          port: connection.port,
+          username: connection.username,
+          password: connection.password,
+          privateKey: connection.privateKey,
+          passphrase: connection.passphrase
+        })
+
+        results.push({
+          connectionId: connection.id,
+          connectionName: connection.name,
+          success: result.success,
+          message: result.message
+        })
+
+        if (result.success) {
+          const updatedConnections = connections.map((c) =>
+            c.id === connection.id ? { ...c, lastConnected: Date.now() } : c
+          )
+          setConnections(updatedConnections)
+        }
+      } catch (error: any) {
+        results.push({
+          connectionId: connection.id,
+          connectionName: connection.name,
+          success: false,
+          message: error.message || '连接失败'
+        })
       }
     }
+
+    setBatchResults(results)
+    await saveData({ projects, connections })
+
+    const successCount = results.filter(r => r.success).length
+    const failCount = results.filter(r => !r.success).length
+
+    let message = `连接完成：成功 ${successCount} 台`
+    if (failCount > 0) {
+      message += `，失败 ${failCount} 台\n\n失败列表：\n`
+      results.filter(r => !r.success).forEach(r => {
+        message += `- ${r.connectionName}: ${r.message}\n`
+      })
+    }
+
+    alert(message)
+    setBatchResults([])
+  }
+
+  const getProjectConnections = (projectId: string) => {
+    return connections.filter(c => c.projectId === projectId).length
   }
 
   return (
     <div className="connection-library">
       <div className="library-header">
         <h2>连接库</h2>
-        <button className="btn-primary" onClick={() => handleOpenModal()}>
-          + 新建连接
-        </button>
+        <div className="header-actions">
+          <button className="btn-secondary" onClick={() => handleOpenModal('project')}>
+            + 新建项目
+          </button>
+          <button className="btn-primary" onClick={() => handleOpenModal('connection')}>
+            + 新建连接
+          </button>
+        </div>
       </div>
 
       <div className="library-toolbar">
@@ -208,7 +349,7 @@ const ConnectionLibrary: React.FC = () => {
             <option value="ungrouped">未分组</option>
             {projects.map((project) => (
               <option key={project.id} value={project.id}>
-                {project.name}
+                {project.name} ({getProjectConnections(project.id)})
               </option>
             ))}
           </select>
@@ -221,9 +362,75 @@ const ConnectionLibrary: React.FC = () => {
         </div>
       </div>
 
+      {selectedConnections.size > 0 && (
+        <div className="batch-actions">
+          <span>已选择 {selectedConnections.size} 项</span>
+          <button onClick={handleSelectAll}>
+            {selectedConnections.size === filteredConnections.length ? '取消全选' : '全选'}
+          </button>
+          <button className="btn-connect-batch" onClick={handleBatchConnect}>
+            批量连接
+          </button>
+          <button className="btn-clear" onClick={() => setSelectedConnections(new Set())}>
+            清空选择
+          </button>
+        </div>
+      )}
+
+      <div className="projects-section">
+        <h3>项目分组</h3>
+        <div className="projects-grid">
+          {projects.map((project) => (
+            <div
+              key={project.id}
+              className={`project-card ${selectedProject === project.id ? 'active' : ''}`}
+              onClick={() => setSelectedProject(project.id)}
+            >
+              <div className="project-color" style={{ backgroundColor: project.color }} />
+              <div className="project-info">
+                <div className="project-name">{project.name}</div>
+                <div className="project-count">{getProjectConnections(project.id)} 个连接</div>
+              </div>
+              <div className="project-actions">
+                <button
+                  className="project-btn"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleOpenModal('project', project)
+                  }}
+                  title="编辑"
+                >
+                  ✏️
+                </button>
+                <button
+                  className="project-btn delete"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleDeleteProject(project.id)
+                  }}
+                  title="删除"
+                >
+                  🗑️
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="connections-grid">
         {filteredConnections.map((connection) => (
-          <div key={connection.id} className="connection-card">
+          <div
+            key={connection.id}
+            className={`connection-card ${selectedConnections.has(connection.id) ? 'selected' : ''}`}
+          >
+            <div className="card-checkbox">
+              <input
+                type="checkbox"
+                checked={selectedConnections.has(connection.id)}
+                onChange={() => toggleSelectConnection(connection.id)}
+              />
+            </div>
             <div className="card-header">
               <h3>{connection.name}</h3>
               <button
@@ -258,10 +465,10 @@ const ConnectionLibrary: React.FC = () => {
               <button className="btn-connect" onClick={() => handleConnect(connection)}>
                 连接
               </button>
-              <button className="btn-secondary" onClick={() => handleOpenModal(connection)}>
+              <button className="btn-secondary" onClick={() => handleOpenModal('connection', connection)}>
                 编辑
               </button>
-              <button className="btn-danger" onClick={() => handleDelete(connection.id)}>
+              <button className="btn-danger" onClick={() => handleDeleteConnection(connection.id)}>
                 删除
               </button>
             </div>
@@ -272,15 +479,15 @@ const ConnectionLibrary: React.FC = () => {
       {filteredConnections.length === 0 && (
         <div className="empty-state">
           <p>没有找到匹配的连接</p>
-          <button onClick={() => handleOpenModal()}>创建第一个连接</button>
+          <button onClick={() => handleOpenModal('connection')}>创建第一个连接</button>
         </div>
       )}
 
-      {showModal && (
+      {showModal && modalType === 'connection' && (
         <div className="modal-overlay" onClick={handleCloseModal}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h2>{editingConnection ? '编辑连接' : '新建连接'}</h2>
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleConnectionSubmit}>
               <div className="form-group">
                 <label>连接名称</label>
                 <input
@@ -408,6 +615,44 @@ const ConnectionLibrary: React.FC = () => {
                 </button>
                 <button type="submit" className="btn-primary">
                   {editingConnection ? '保存' : '创建'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showModal && modalType === 'project' && (
+        <div className="modal-overlay" onClick={handleCloseModal}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>{editingProject ? '编辑项目' : '新建项目'}</h2>
+            <form onSubmit={handleProjectSubmit}>
+              <div className="form-group">
+                <label>项目名称</label>
+                <input
+                  type="text"
+                  required
+                  value={projectFormData.name}
+                  onChange={(e) => setProjectFormData({ ...projectFormData, name: e.target.value })}
+                  placeholder="例如：生产环境"
+                />
+              </div>
+
+              <div className="form-group">
+                <label>项目颜色</label>
+                <input
+                  type="color"
+                  value={projectFormData.color}
+                  onChange={(e) => setProjectFormData({ ...projectFormData, color: e.target.value })}
+                />
+              </div>
+
+              <div className="modal-actions">
+                <button type="button" className="btn-secondary" onClick={handleCloseModal}>
+                  取消
+                </button>
+                <button type="submit" className="btn-primary">
+                  {editingProject ? '保存' : '创建'}
                 </button>
               </div>
             </form>

@@ -56,6 +56,7 @@ export interface TerminalSession {
   id: string
   name: string
   connectionId: string
+  connection: SSHConnection
   isActive: boolean
 }
 
@@ -67,11 +68,11 @@ export interface FileItem {
   permissions?: string
 }
 
-export interface SSH2Stream {
-  id: number
-  on(event: string, callback: (data: any) => void): void
-  write(data: string): void
-  end(): void
+export interface LocalFileItem {
+  name: string
+  isDirectory: boolean
+  isFile: boolean
+  path: string
 }
 
 export interface ConnectionsData {
@@ -82,6 +83,13 @@ export interface ConnectionsData {
 export interface SnippetsData {
   categories: SnippetCategory[]
   snippets: Snippet[]
+}
+
+export interface BatchConnectionResult {
+  connectionId: string
+  connectionName: string
+  success: boolean
+  message?: string
 }
 
 declare global {
@@ -109,7 +117,9 @@ declare global {
         errorOutput: string
         code: number
       }>
-      sshShell: (id: string) => Promise<{ success: boolean; streamId?: string }>
+      sshStartShell: (id: string) => Promise<{ success: boolean; message?: string }>
+      sshWrite: (id: string, data: string) => Promise<{ success: boolean; message?: string }>
+      sshResize: (id: string, cols: number, rows: number) => Promise<{ success: boolean; message?: string }>
       sshSftpList: (id: string, path: string) => Promise<{
         success: boolean
         files?: FileItem[]
@@ -140,9 +150,26 @@ declare global {
         success: boolean
         message?: string
       }>
+      sshSftpUpload: (id: string, localPath: string, remotePath: string) => Promise<{
+        success: boolean
+        message?: string
+      }>
+      sshSftpDownload: (id: string, remotePath: string, localPath: string) => Promise<{
+        success: boolean
+        message?: string
+      }>
+      localList: (dirPath: string) => Promise<{
+        success: boolean
+        files?: LocalFileItem[]
+        currentPath?: string
+        message?: string
+      }>
       selectPrivateKey: () => Promise<{ path: string; content: string } | null>
+      selectDirectory: () => Promise<string | null>
       openExternal: (url: string) => Promise<void>
       getHomeDirectory: () => Promise<string>
+      onShellData: (callback: (data: { id: string; data: string }) => void) => void
+      onShellClose: (callback: (data: { id: string }) => void) => void
     }
   }
 }

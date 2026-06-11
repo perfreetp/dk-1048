@@ -19,6 +19,11 @@
   color: var(--text-primary);
 }
 
+.header-actions {
+  display: flex;
+  gap: 12px;
+}
+
 .library-toolbar {
   display: flex;
   gap: 16px;
@@ -66,6 +71,145 @@
   border-color: var(--accent-primary);
 }
 
+.batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background-color: rgba(0, 122, 204, 0.1);
+  border: 1px solid var(--accent-primary);
+  border-radius: 6px;
+  margin-bottom: 20px;
+}
+
+.batch-actions span {
+  font-size: 14px;
+  color: var(--accent-primary);
+  font-weight: 500;
+  margin-right: auto;
+}
+
+.batch-actions button {
+  padding: 8px 16px;
+  font-size: 13px;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.batch-actions button:hover {
+  background-color: var(--bg-hover);
+}
+
+.btn-connect-batch {
+  background-color: var(--success-color) !important;
+  color: var(--bg-primary) !important;
+  border-color: var(--success-color) !important;
+}
+
+.btn-connect-batch:hover {
+  background-color: #3eb99d !important;
+}
+
+.btn-clear {
+  background-color: var(--error-color) !important;
+  color: white !important;
+  border-color: var(--error-color) !important;
+}
+
+.projects-section {
+  margin-bottom: 24px;
+}
+
+.projects-section h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+}
+
+.projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.project-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background-color: var(--bg-secondary);
+  border: 2px solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.project-card:hover {
+  border-color: var(--accent-primary);
+  box-shadow: 0 4px 12px rgba(0, 122, 204, 0.1);
+}
+
+.project-card.active {
+  border-color: var(--accent-primary);
+  background-color: rgba(0, 122, 204, 0.05);
+}
+
+.project-color {
+  width: 8px;
+  height: 48px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.project-info {
+  flex: 1;
+}
+
+.project-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.project-count {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.project-actions {
+  display: flex;
+  gap: 8px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.project-card:hover .project-actions {
+  opacity: 1;
+}
+
+.project-btn {
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: transform 0.2s;
+}
+
+.project-btn:hover {
+  transform: scale(1.2);
+}
+
+.project-btn.delete:hover {
+  color: var(--error-color);
+}
+
 .connections-grid {
   flex: 1;
   display: grid;
@@ -77,10 +221,11 @@
 
 .connection-card {
   background-color: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  border: 2px solid var(--border-color);
   border-radius: 8px;
   padding: 20px;
   transition: all 0.2s;
+  position: relative;
 }
 
 .connection-card:hover {
@@ -88,11 +233,29 @@
   box-shadow: 0 4px 12px rgba(0, 122, 204, 0.1);
 }
 
+.connection-card.selected {
+  border-color: var(--accent-primary);
+  background-color: rgba(0, 122, 204, 0.05);
+}
+
+.card-checkbox {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.card-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
 .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
+  padding-right: 30px;
 }
 
 .card-header h3 {
@@ -239,6 +402,12 @@
   font-size: 14px;
 }
 
+.form-group input[type="color"] {
+  height: 50px;
+  padding: 4px;
+  cursor: pointer;
+}
+
 .form-group textarea {
   resize: vertical;
 }
@@ -281,4 +450,36 @@
 
 .btn-primary:hover {
   background-color: var(--accent-secondary);
+}
+
+.btn-secondary {
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  padding: 10px 20px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+  background-color: var(--bg-hover);
+}
+
+.btn-danger {
+  background-color: var(--error-color);
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.btn-danger:hover {
+  background-color: #d46b5d;
 }

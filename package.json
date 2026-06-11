@@ -38,7 +38,7 @@
     "appId": "com.sshmanager.app",
     "productName": "SSH Manager",
     "directories": {
-      "output": "release"
+      "output": "dist-release"
     },
     "files": [
       "dist/**/*",
