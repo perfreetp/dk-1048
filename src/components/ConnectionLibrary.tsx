@@ -226,6 +226,7 @@ const ConnectionLibrary: React.FC<ConnectionLibraryProps> = ({ onSwitchToTermina
         )
         setConnections(updatedConnections)
         await saveData({ projects, connections: updatedConnections })
+        window.electronAPI.sendSingleConnection(connection)
         onSwitchToTerminal()
       } else {
         alert(`连接失败: ${result.message}`)
@@ -286,7 +287,6 @@ const ConnectionLibrary: React.FC<ConnectionLibraryProps> = ({ onSwitchToTermina
 
         if (result.success) {
           successfulConnections.push(connection)
-          await window.electronAPI.sshStartShell(connection.id)
           const updatedConnections = connections.map((c) =>
             c.id === connection.id ? { ...c, lastConnected: Date.now() } : c
           )
@@ -309,6 +309,7 @@ const ConnectionLibrary: React.FC<ConnectionLibraryProps> = ({ onSwitchToTermina
     const failCount = results.filter(r => !r.success).length
 
     if (successCount > 0) {
+      window.electronAPI.sendBatchConnections(successfulConnections)
       const failList = results.filter(r => !r.success)
       let message = `连接完成：成功 ${successCount} 台`
       if (failCount > 0) {
@@ -317,7 +318,6 @@ const ConnectionLibrary: React.FC<ConnectionLibraryProps> = ({ onSwitchToTermina
           message += `• ${r.connectionName}: ${r.message}\n`
         })
       }
-      message += '\n点击确定跳转到终端会话'
       alert(message)
       setSelectedConnections(new Set())
       onSwitchToTerminal()

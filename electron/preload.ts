@@ -32,5 +32,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   onShellClose: (callback: (data: { id: string }) => void) => {
     ipcRenderer.on('ssh-shell-close', (_, data) => callback(data))
+  },
+  sendBatchConnections: (connections: any[]) => {
+    ipcRenderer.send('batch-connections-created', connections)
+  },
+  onBatchConnections: (callback: (connections: any[]) => void) => {
+    ipcRenderer.on('batch-connections-created', (_, connections) => callback(connections))
+  },
+  sendSingleConnection: (connection: any) => {
+    ipcRenderer.send('single-connection-created', connection)
+  },
+  onSingleConnection: (callback: (connection: any) => void) => {
+    ipcRenderer.on('single-connection-created', (_, connection) => callback(connection))
   }
 })

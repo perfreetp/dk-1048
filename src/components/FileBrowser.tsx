@@ -291,6 +291,11 @@ const FileBrowser: React.FC = () => {
     }
   }
 
+  const handleRemoteFileDragStart = (e: React.DragEvent, fileName: string) => {
+    e.dataTransfer.setData('text/plain', fileName)
+    e.dataTransfer.effectAllowed = 'copy'
+  }
+
   const handleDrop = async (e: React.DragEvent, side: 'local' | 'remote') => {
     e.preventDefault()
     setDragOverLocal(false)
@@ -298,26 +303,26 @@ const FileBrowser: React.FC = () => {
 
     if (side === 'remote' && selectedConnection) {
       const files = e.dataTransfer.files
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        const remoteFilePath = remotePath === '/' ? `/${file.name}` : `${remotePath}/${file.name}`
-        
-        try {
-          await window.electronAPI.sshSftpUpload(
-            selectedConnection.id,
-            file.path,
-            remoteFilePath
-          )
-        } catch (error) {
-          alert(`上传失败: ${file.name}`)
+      if (files.length > 0) {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i]
+          const remoteFilePath = remotePath === '/' ? `/${file.name}` : `${remotePath}/${file.name}`
+          
+          try {
+            await window.electronAPI.sshSftpUpload(
+              selectedConnection.id,
+              file.path,
+              remoteFilePath
+            )
+          } catch (error) {
+            alert(`上传失败: ${file.name}`)
+          }
         }
+        await loadRemoteFiles()
       }
-      await loadRemoteFiles()
     } else if (side === 'local' && selectedConnection) {
-      const fileNames = e.dataTransfer.getData('text/plain').split('\n')
-      for (const fileName of fileNames) {
-        if (!fileName.trim()) continue
-        
+      const fileName = e.dataTransfer.getData('text/plain')
+      if (fileName && !e.dataTransfer.files.length) {
         const remoteFilePath = remotePath === '/' ? `/${fileName}` : `${remotePath}/${fileName}`
         const localFilePath = `${localPath}/${fileName}`
         
@@ -330,8 +335,26 @@ const FileBrowser: React.FC = () => {
         } catch (error) {
           alert(`下载失败: ${fileName}`)
         }
+        await loadLocalFiles()
+      } else if (e.dataTransfer.files.length > 0) {
+        const files = e.dataTransfer.files
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i]
+          const remoteFilePath = remotePath === '/' ? `/${file.name}` : `${remotePath}/${file.name}`
+          const localFilePath = `${localPath}/${file.name}`
+          
+          try {
+            await window.electronAPI.sshSftpDownload(
+              selectedConnection.id,
+              remoteFilePath,
+              localFilePath
+            )
+          } catch (error) {
+            alert(`下载失败: ${file.name}`)
+          }
+        }
+        await loadLocalFiles()
       }
-      await loadLocalFiles()
     }
   }
 
@@ -447,9 +470,6 @@ const FileBrowser: React.FC = () => {
                 onDragOver={(e) => handleDragOver(e, 'local')}
                 onDragLeave={(e) => handleDragLeave(e, 'local')}
                 onDrop={(e) => handleDrop(e, 'local')}
-                onDragStart={(e) => {
-                  e.dataTransfer.setData('text/plain', selectedLocalFiles.join('\n'))
-                }}
               >
                 <div className="files-header">
                   <div className="col-name">文件名</div>
@@ -517,9 +537,6 @@ const FileBrowser: React.FC = () => {
                 onDragOver={(e) => handleDragOver(e, 'remote')}
                 onDragLeave={(e) => handleDragLeave(e, 'remote')}
                 onDrop={(e) => handleDrop(e, 'remote')}
-                onDragStart={(e) => {
-                  e.dataTransfer.setData('text/plain', selectedRemoteFiles.join('\n'))
-                }}
               >
                 <div className="files-header">
                   <div className="col-name">文件名</div>
@@ -540,6 +557,7 @@ const FileBrowser: React.FC = () => {
                         onClick={() => handleRemoteFileClick(file)}
                         onDoubleClick={() => handlePreview(file)}
                         draggable={!file.isDirectory}
+                        onDragStart={(e) => handleRemoteFileDragStart(e, file.name)}
                       >
                         <div className="col-name">
                           <span className="file-icon">

@@ -170,6 +170,10 @@ declare global {
       getHomeDirectory: () => Promise<string>
       onShellData: (callback: (data: { id: string; data: string }) => void) => void
       onShellClose: (callback: (data: { id: string }) => void) => void
+      sendBatchConnections: (connections: SSHConnection[]) => void
+      onBatchConnections: (callback: (connections: SSHConnection[]) => void) => void
+      sendSingleConnection: (connection: SSHConnection) => void
+      onSingleConnection: (callback: (connection: SSHConnection) => void) => void
     }
   }
 }

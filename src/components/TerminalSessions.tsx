@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { WebLinksAddon } from 'xterm-addon-web-links'
@@ -76,6 +76,24 @@ const TerminalSessions: React.FC = () => {
     window.electronAPI.onShellData(handleShellData)
     window.electronAPI.onShellClose(handleShellClose)
 
+    window.electronAPI.onBatchConnections(async (connectionsToCreate: SSHConnection[]) => {
+      for (const conn of connectionsToCreate) {
+        try {
+          await createTerminalInstanceDirect(conn)
+        } catch (error) {
+          console.error(`Failed to create terminal for ${conn.name}:`, error)
+        }
+      }
+    })
+
+    window.electronAPI.onSingleConnection(async (conn: SSHConnection) => {
+      try {
+        await createTerminalInstanceDirect(conn)
+      } catch (error) {
+        console.error(`Failed to create terminal for ${conn.name}:`, error)
+      }
+    })
+
     return () => {
       terminalInstances.forEach(instance => {
         if (instance.terminal) {
@@ -125,12 +143,10 @@ const TerminalSessions: React.FC = () => {
     }
   }
 
-  const createTerminalInstance = async (connection: SSHConnection): Promise<string> => {
-    const instanceId = `terminal-${Date.now()}`
+  const createTerminalInstanceDirect = async (connection: SSHConnection): Promise<string> => {
+    const instanceId = `terminal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     
     try {
-      setConnectionError(null)
-      
       const result = await window.electronAPI.sshConnect({
         id: connection.id,
         host: connection.host,
@@ -166,9 +182,12 @@ const TerminalSessions: React.FC = () => {
 
       return instanceId
     } catch (error: any) {
-      setConnectionError(`连接 ${connection.name} 失败: ${error.message}`)
       throw error
     }
+  }
+
+  const createTerminalInstance = async (connection: SSHConnection): Promise<string> => {
+    return createTerminalInstanceDirect(connection)
   }
 
   const initTerminal = (instanceId: string, instance: TerminalInstance) => {
@@ -275,7 +294,7 @@ const TerminalSessions: React.FC = () => {
 
     if (activeSessionId === instanceId) {
       if (updatedInstances.length > 0) {
-        setActiveSessionId(updatedInstances[0].id)
+        setActiveSessionId(updatedInstances[updatedInstances.length - 1].id)
       } else {
         setActiveSessionId(null)
       }
